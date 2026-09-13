@@ -1,69 +1,23 @@
-
 import json
-import logging
 import os
-import shlex
-import time
+import logging
 from collections import defaultdict
-
-from ollama import Client
 
 from MCBridge import ChatListener, Player
 
 
-# MODEL = os.getenv("OLLAMA_MODEL", "gemma4:31b")
-MODEL = "gpt-oss:120b"
-# OLLAMA_REQUEST_TIMEOUT = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "120"))
-# OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_HOST = "http://192.168.0.122:11434"
-
-MAX_OUTPUT_TOKENS = int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "256"))
-EMPTY_RESPONSE_RETRIES = int(os.getenv("OLLAMA_EMPTY_RESPONSE_RETRIES", "2"))
-
-# Maximum number of previous messages retained in the conversation.
-# The actual building memory is stored separately and is not affected
-# by this limit.
-MAX_HISTORY_MESSAGES = int(
-    os.getenv("OLLAMA_MAX_HISTORY_MESSAGES", "80")
-)
-
-LOG_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "aicraft.log",
-)
-
-
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    encoding="utf-8",
-)
-
 logger = logging.getLogger(__name__)
 
 
-class OllamaAgent:
+class MinecraftController:
+    """Minecraft interface and persistent building memory."""
 
-    def __init__(self, player, model=MODEL):
-        self.CRAFT_ABUNDANCE_THRESHOLD = 128
-        self.player = player
-        self.model = model
+    def __init__(self):
+        self.player = Player()
 
-        self.ollama = Client(
-            host=OLLAMA_HOST,
-            # timeout=OLLAMA_REQUEST_TIMEOUT,
-        )
-
-        # Conversation history.
-        self.messages = []
+        self.craftAbundanceThreshold = 128
 
         # Persistent world memory.
-        #
-        # Coordinates are stored as:
-        # (x, y, z): blockType
-        #
-        # This is separate from the LLM conversation.
         self.placedBlocks = {}
         self.brokenBlocks = set()
 
@@ -72,30 +26,21 @@ class OllamaAgent:
         self.buildPlan = []
         self.completedSteps = set()
         self.currentStep = None
-
-        # Track whether the model has actually verified a build.
         self.buildVerified = False
 
-        self.tools = self._createTools()
-
-        # Add initial context.
-        self.additional_context()
-
+        self.tools = self.createTools()
 
     # ==========================================================
     # TOOL DEFINITIONS
     # ==========================================================
 
-    def _createTools(self):
+    def createTools(self):
         return [
-
             {
                 "type": "function",
                 "function": {
                     "name": "goto",
-                    "description": (
-                        "Move the player to integer coordinates."
-                    ),
+                    "description": "Move the player to integer coordinates.",
                     "parameters": {
                         "type": "object",
                         "required": ["x", "y", "z"],
@@ -107,14 +52,11 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
                     "name": "mine",
-                    "description": (
-                        "Mine the block at integer coordinates."
-                    ),
+                    "description": "Mine the block at integer coordinates.",
                     "parameters": {
                         "type": "object",
                         "required": ["x", "y", "z"],
@@ -126,7 +68,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -145,7 +86,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -173,14 +113,11 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
                     "name": "attack",
-                    "description": (
-                        "Attack the nearest matching entity."
-                    ),
+                    "description": "Attack the nearest matching entity.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -195,7 +132,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -218,14 +154,11 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
                     "name": "findNearbyMonsters",
-                    "description": (
-                        "Find hostile mobs near the player."
-                    ),
+                    "description": "Find hostile mobs near the player.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -245,7 +178,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -261,7 +193,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -282,26 +213,20 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
                     "name": "follow",
-                    "description": (
-                        "Follow a player by name."
-                    ),
+                    "description": "Follow a player by name.",
                     "parameters": {
                         "type": "object",
                         "required": ["playerName"],
                         "properties": {
-                            "playerName": {
-                                "type": "string"
-                            },
+                            "playerName": {"type": "string"},
                         },
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -328,7 +253,6 @@ class OllamaAgent:
                     },
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -346,19 +270,16 @@ class OllamaAgent:
                     },
                 },
             },
-
         ]
-
 
     # ==========================================================
     # BUILDING MEMORY
     # ==========================================================
 
-    def _formatCoordinates(self, x, y, z):
+    def formatCoordinates(self, x, y, z):
         return f"{x},{y},{z}"
 
-
-    def _recordPlacedBlock(self, blockType, x, y, z):
+    def recordPlacedBlock(self, blockType, x, y, z):
         coordinates = (
             int(x),
             int(y),
@@ -366,9 +287,6 @@ class OllamaAgent:
         )
 
         self.placedBlocks[coordinates] = blockType
-
-        # A successful placement invalidates any previous assumption
-        # that the build is verified.
         self.buildVerified = False
 
         logger.info(
@@ -377,8 +295,7 @@ class OllamaAgent:
             coordinates,
         )
 
-
-    def _recordBrokenBlock(self, x, y, z):
+    def recordBrokenBlock(self, x, y, z):
         coordinates = (
             int(x),
             int(y),
@@ -387,7 +304,6 @@ class OllamaAgent:
 
         self.placedBlocks.pop(coordinates, None)
         self.brokenBlocks.add(coordinates)
-
         self.buildVerified = False
 
         logger.info(
@@ -395,8 +311,7 @@ class OllamaAgent:
             coordinates,
         )
 
-
-    def _isBlockAlreadyPlaced(self, x, y, z):
+    def isBlockAlreadyPlaced(self, x, y, z):
         coordinates = (
             int(x),
             int(y),
@@ -405,8 +320,7 @@ class OllamaAgent:
 
         return coordinates in self.placedBlocks
 
-
-    def _getBuildingMemory(self):
+    def getBuildingMemory(self):
         if not self.placedBlocks:
             return "No blocks placed yet."
 
@@ -425,14 +339,7 @@ class OllamaAgent:
             f"Block counts: {counts}"
         )
 
-
-    def _getRecentPlacedBlocks(self, limit=20):
-        """
-        Return a small list of recent block placements.
-
-        Do not send the entire dictionary to Ollama.
-        """
-
+    def getRecentPlacedBlocks(self, limit=20):
         if not self.placedBlocks:
             return "No placed blocks."
 
@@ -440,18 +347,16 @@ class OllamaAgent:
 
         return "\n".join(
             f"- {blockType} at "
-            f"{self._formatCoordinates(*coordinates)}"
+            f"{self.formatCoordinates(*coordinates)}"
             for coordinates, blockType in recentBlocks
         )
-
 
     # ==========================================================
     # BUILD PLAN
     # ==========================================================
 
-    def _setBuildingPlan(self, goal, steps=None):
+    def setBuildingPlan(self, goal, steps=None):
         self.currentGoal = goal
-
         self.buildPlan = steps or []
 
         self.completedSteps = set()
@@ -464,8 +369,7 @@ class OllamaAgent:
             self.buildPlan,
         )
 
-
-    def _getBuildingContext(self):
+    def getBuildingContext(self):
         if not self.currentGoal:
             return "No active building goal."
 
@@ -489,23 +393,16 @@ class OllamaAgent:
             f"{completed or 'None'}\n"
             f"CURRENT STEP: {currentStep}\n"
             f"BUILD VERIFIED: {self.buildVerified}\n"
-            f"BUILD MEMORY: {self._getBuildingMemory()}\n"
+            f"BUILD MEMORY: {self.getBuildingMemory()}\n"
             f"RECENT PLACEMENTS:\n"
-            f"{self._getRecentPlacedBlocks()}"
+            f"{self.getRecentPlacedBlocks()}"
         )
-
 
     # ==========================================================
     # COMPACT TOOL RESULTS
     # ==========================================================
 
-    def _formatToolResult(self, name, arguments, result):
-        """
-        Convert verbose Minecraft tool results into compact text.
-
-        This is what gets sent to Ollama.
-        """
-
+    def formatToolResult(self, name, arguments, result):
         x = arguments.get("x")
         y = arguments.get("y")
         z = arguments.get("z")
@@ -513,21 +410,15 @@ class OllamaAgent:
         coordinates = None
 
         if x is not None and y is not None and z is not None:
-            coordinates = self._formatCoordinates(x, y, z)
+            coordinates = self.formatCoordinates(x, y, z)
 
         if name == "place":
-            blockType = arguments.get(
-                "blockType",
-                "unknown",
-            )
+            blockType = arguments.get("blockType", "unknown")
 
             if coordinates:
-                return (
-                    f"placed {blockType} at {coordinates}"
-                )
+                return f"placed {blockType} at {coordinates}"
 
             return f"placed {blockType}"
-
 
         if name == "mine":
             if coordinates:
@@ -535,51 +426,60 @@ class OllamaAgent:
 
             return "broke block"
 
-
         if name == "goto":
             if coordinates:
                 return f"moved to {coordinates}"
 
             return "movement completed"
 
-
         if name == "mineBlock":
-            blockName = arguments.get(
-                "blockName",
-                "unknown",
-            )
-
+            blockName = arguments.get("blockName", "unknown")
             total = arguments.get("total", 0)
 
             return f"mined {total} {blockName}"
 
         if name == "craft":
             itemName = arguments.get("itemName", "")
-            if str(result).lower().startswith("You do not have"):
-                return f"craft {itemName} FAILED due to insufficient materials"
+
+            if str(result).lower().startswith(
+                "you do not have"
+            ):
+                return (
+                    f"craft {itemName} FAILED due to "
+                    "insufficient materials"
+                )
 
             try:
                 inventory = self.player.getInventory()
+
                 currentCount = sum(
                     slot["count"]
                     for slot in inventory.values()
-                    if itemName.lower() in str(slot["name"]).lower()
+                    if itemName.lower()
+                    in str(slot["name"]).lower()
                 )
+
             except Exception:
                 currentCount = None
 
-            if currentCount is not None and currentCount >= self.CRAFT_ABUNDANCE_THRESHOLD:
+            if (
+                currentCount is not None
+                and currentCount >= self.craftAbundanceThreshold
+            ):
                 return (
-                    f"You already have {currentCount} {itemName} in your "
-                    f"inventory - that's more than enough. Do not craft "
-                    f"more; move on to the next building step."
+                    f"You already have {currentCount} {itemName} "
+                    "in your inventory - that's more than enough. "
+                    "Do not craft more; move on to the next "
+                    "building step."
                 )
-            return f"crafted {itemName}, current count: {currentCount}"
 
+            return (
+                f"crafted {itemName}, "
+                f"current count: {currentCount}"
+            )
 
         if name == "attack":
             return "attack completed"
-
 
         if name == "simpleAction":
             return (
@@ -587,9 +487,6 @@ class OllamaAgent:
                 f"{arguments.get('action', 'action')}"
             )
 
-
-        # Information tools still need to return useful data.
-        # They should not be replaced by a generic success message.
         if name in {
             "findEntities",
             "findNearbyMonsters",
@@ -597,8 +494,7 @@ class OllamaAgent:
             "getBlock",
             "follow",
         }:
-            return self._compactInformationResult(result)
-
+            return self.compactInformationResult(result)
 
         if isinstance(result, dict):
             if result.get("ok") is False:
@@ -609,21 +505,12 @@ class OllamaAgent:
 
             return "tool completed successfully"
 
-
         if isinstance(result, str):
             return result[:500]
 
-
         return "tool completed successfully"
 
-
-    def _compactInformationResult(self, result):
-        """
-        Compact information returned by information tools.
-
-        Keeps the response useful without dumping massive dictionaries.
-        """
-
+    def compactInformationResult(self, result):
         if result is None:
             return "No information returned."
 
@@ -637,7 +524,6 @@ class OllamaAgent:
             if not result:
                 return "No results."
 
-            # Keep only a reasonable number of entries.
             compactResults = result[:20]
 
             return json.dumps(
@@ -652,7 +538,6 @@ class OllamaAgent:
                     default=str,
                 )[:1500]
 
-            # Keep useful fields when present.
             usefulKeys = {
                 "block",
                 "blockName",
@@ -691,12 +576,11 @@ class OllamaAgent:
 
         return str(result)[:1500]
 
-
     # ==========================================================
     # TOOL EXECUTION
     # ==========================================================
 
-    def _call_tool(self, name, arguments):
+    def callTool(self, name, arguments):
         logger.info(
             "TOOL START name=%s arguments=%s",
             name,
@@ -722,20 +606,13 @@ class OllamaAgent:
             "stop": self.player.stop,
         }
 
-        # Handle simpleAction.
         if name == "simpleAction":
             name = arguments.pop("action")
 
-
-        # Prevent duplicate placement based on local memory.
-        #
-        # This protects against the model repeatedly placing the
-        # same block at the same coordinate.
         if name == "place":
             x = arguments["x"]
             y = arguments["y"]
             z = arguments["z"]
-
             blockType = arguments["blockType"]
 
             coordinates = (
@@ -744,7 +621,7 @@ class OllamaAgent:
                 int(z),
             )
 
-            if self._isBlockAlreadyPlaced(x, y, z):
+            if self.isBlockAlreadyPlaced(x, y, z):
                 existingBlock = self.placedBlocks[coordinates]
 
                 logger.warning(
@@ -758,16 +635,14 @@ class OllamaAgent:
                 return (
                     f"already placed {existingBlock} at "
                     f"{x},{y},{z}; "
-                    f"choose another position"
+                    "choose another position"
                 )
-
 
         if name not in toolMap:
             return {
                 "ok": False,
                 "error": f"Unknown tool: {name}",
             }
-
 
         try:
             result = toolMap[name](**arguments)
@@ -785,13 +660,11 @@ class OllamaAgent:
                 ),
             }
 
-
         logger.info(
             "TOOL END name=%s result=%s",
             name,
             result,
         )
-
 
         if (
             isinstance(result, str)
@@ -802,10 +675,8 @@ class OllamaAgent:
                 "error": result,
             }
 
-
-        # Record successful block operations.
         if name == "place":
-            self._recordPlacedBlock(
+            self.recordPlacedBlock(
                 arguments["blockType"],
                 arguments["x"],
                 arguments["y"],
@@ -813,459 +684,45 @@ class OllamaAgent:
             )
 
         elif name == "mine":
-            self._recordBrokenBlock(
+            self.recordBrokenBlock(
                 arguments["x"],
                 arguments["y"],
                 arguments["z"],
             )
 
-
-        return self._formatToolResult(
+        return self.formatToolResult(
             name,
             arguments,
             result,
         )
 
-
     # ==========================================================
-    # CONTEXT MANAGEMENT
+    # MINECRAFT CHAT
     # ==========================================================
 
-    def additional_context(
-        self,
-        currentGoal=None,
-    ):
-        """
-        Add the current world and planner context.
-
-        This context is replaced on every model request rather
-        than accumulating multiple copies.
-        """
-
-        if currentGoal is None:
-            currentGoal = self.currentGoal or (
-                "You dont have any current goals."
-            )
-
-        # Keep world context compact.
-        try:
-            playerSummary = self.player.getPlayerSummary()
-
-        except Exception as error:
-            logger.exception(
-                "Failed to get player summary"
-            )
-
-            playerSummary = (
-                f"Unable to read player summary: {error}"
-            )
-
-
-        self.messages.append({
-            "role": "system",
-            "content": (
-                "[AICRAFT_WORLD_CONTEXT]\n"
-                "Current player/world information:\n"
-                f"{playerSummary}"
-            ),
-        })
-
-
-        self.messages.append({
-            "role": "system",
-            "content": (
-                "[AICRAFT_PLANNER_CONTEXT]\n"
-                "You are a Minecraft assistant playing on "
-                "version 26.2.\n\n"
-
-                "Use the available tools to perform actions "
-                "in the world.\n"
-
-                "Never invent tool results.\n"
-
-                "After using tools, briefly explain what "
-                "happened.\n"
-
-                "If the tool you need is not available, explain "
-                "that you cannot perform the action or use an "
-                "alternative tool.\n"
-
-                "When referencing blocks in tools, use the exact "
-                "block tag including namespace, for example "
-                "minecraft:stone or minecraft:oak_log.\n\n"
-
-                "You are a multi-step planner.\n"
-
-                "If the user asks you to do something requiring "
-                "multiple steps, plan out the steps and execute "
-                "them one by one.\n"
-
-                "Call exactly one tool per response.\n"
-
-                "Wait for its result before choosing the next "
-                "tool.\n\n"
-
-                "IMPORTANT BUILDING RULES:\n"
-
-                "Never place a block at a coordinate that is "
-                "already recorded in BUILD MEMORY.\n"
-
-                "Do not repeatedly call the same tool with the "
-                "same arguments.\n"
-
-                "Do not claim a structure is finished without "
-                "verifying it.\n"
-
-                "A house should have a floor, walls, a door, "
-                "and a roof unless the user specifies otherwise.\n"
-
-                "Track your progress using the building plan.\n"
-
-                "If a building plan does not exist, create a "
-                "clear plan before building.\n\n"
-
-                f"CURRENT GOAL:\n{currentGoal}\n\n"
-
-                f"{self._getBuildingContext()}"
-            ),
-        })
-
-
-    def remove_last_context(self):
-        contextMarkers = (
-            "[AICRAFT_WORLD_CONTEXT]",
-            "[AICRAFT_PLANNER_CONTEXT]",
+    def isDirectCommand(self, message):
+        return message.split(maxsplit=1)[0] in (
+            self.player.commandTemplates
         )
 
-        self.messages[:] = [
-            message
-            for message in self.messages
-            if not (
-                message.get("role") == "system"
-                and any(
-                    message.get("content", "").startswith(marker)
-                    for marker in contextMarkers
-                )
-            )
-        ]
+    def executeDirectCommand(self, message):
+        self.player.handleChat(message)
 
+    def sendMessage(self, message):
+        self.player.sendMessage(message)
 
-    def _trimHistory(self):
-        """
-        Keep the conversation from growing indefinitely.
-
-        System context is always retained.
-        The oldest ordinary conversation messages are removed
-        when the history exceeds MAX_HISTORY_MESSAGES.
-        """
-
-        if len(self.messages) <= MAX_HISTORY_MESSAGES:
-            return
-
-        systemMessages = [
-            message
-            for message in self.messages
-            if message.get("role") == "system"
-        ]
-
-        otherMessages = [
-            message
-            for message in self.messages
-            if message.get("role") != "system"
-        ]
-
-        # Keep recent history only.
-        remainingCount = max(
-            0,
-            MAX_HISTORY_MESSAGES - len(systemMessages),
-        )
-
-        self.messages[:] = (
-            systemMessages
-            + otherMessages[-remainingCount:]
-        )
-
-        logger.info(
-            "TRIMMED HISTORY messages=%d",
-            len(self.messages),
-        )
-
-
-    # ==========================================================
-    # MODEL REQUEST
-    # ==========================================================
-
-    def _ask_model(self):
-        for attempt in range(
-            EMPTY_RESPONSE_RETRIES + 1
-        ):
-
-            self.remove_last_context()
-            self.additional_context()
-            self._trimHistory()
-            print(self.messages)
-
-            started = time.monotonic()
-
-            logger.info(
-                "MODEL REQUEST START attempt=%d messages=%d",
-                attempt + 1,
-                len(self.messages),
-            )
-
-
-            try:
-                response = self.ollama.chat(
-                    model=self.model,
-                    messages=self.messages,
-                    tools=self.tools,
-                    think=False,
-                    options={
-                        "num_predict": MAX_OUTPUT_TOKENS,
-                        "temperature": 0.2,
-                    },
-                )
-
-                message = response.message
-
-                content = message.content or ""
-                toolCalls = message.tool_calls or []
-
-                thinking = getattr(
-                    message,
-                    "thinking",
-                    "",
-                ) or ""
-
-
-                logger.info(
-                    "MODEL REQUEST END seconds=%.2f "
-                    "tool_calls=%d content_chars=%d "
-                    "thinking_chars=%d",
-
-                    time.monotonic() - started,
-                    len(toolCalls),
-                    len(content),
-                    len(thinking),
-                )
-
-
-                if toolCalls or content.strip():
-                    return response
-
-
-                logger.warning(
-                    "Ollama returned an empty response. "
-                    "thinking_chars=%d attempt=%d",
-
-                    len(thinking),
-                    attempt + 1,
-                )
-
-
-                if attempt < EMPTY_RESPONSE_RETRIES:
-                    self.messages.append({
-                        "role": "user",
-                        "content": (
-                            "Your previous response was empty. "
-                            "Continue the current task now. "
-                            "Call exactly one appropriate tool, "
-                            "or briefly explain why the task "
-                            "cannot be completed."
-                        ),
-                    })
-
-                    continue
-
-
-                raise RuntimeError(
-                    "Ollama returned an empty response after "
-                    f"{EMPTY_RESPONSE_RETRIES + 1} attempts"
-                )
-
-
-            except Exception:
-                logger.exception(
-                    "MODEL REQUEST FAILED seconds=%.2f",
-                    time.monotonic() - started,
-                )
-
-                raise
-
-
-    # ==========================================================
-    # CHAT HANDLING
-    # ==========================================================
-
-    def handle_message(self, message):
-        message = message.strip()
-
-        if not message:
-            return
-
-        logger.info(
-            "Received chat message: %s",
-            message,
-        )
-
-
-        # Handle direct Minecraft commands.
-        try:
-            commandName = shlex.split(message)[0]
-
-        except (IndexError, ValueError):
-            commandName = ""
-
-
-        if commandName in self.player.commandTemplates:
-            logger.info(
-                "Executing direct command: %s",
-                message,
-            )
-
-            self.player.handleChat(message)
-
-            return
-
-
-        # Start a new goal.
-        self.currentGoal = message
-
-        self.buildVerified = False
-
-        # Do not clear placedBlocks here.
-        #
-        # The AI must remember blocks it placed earlier.
-        # A new user message can refer to the same world.
-        self.currentStep = None
-
-
-        self.remove_last_context()
-
-        self.additional_context(message)
-
-        self.messages.append({
-            "role": "user",
-            "content": message,
-        })
-
-
-        try:
-            logger.info(
-                "MODEL START model=%s",
-                self.model,
-            )
-
-            response = self._ask_model()
-
-            toolRound = 0
-
-
-            while response.message.tool_calls:
-                toolRound += 1
-
-                if toolRound > 500:
-                    raise RuntimeError("Maximum tool rounds exceeded.")
-
-                toolCalls = response.message.tool_calls
-
-                if len(toolCalls) > 1:
-                    logger.warning(
-                        "MODEL returned %d tool calls; executing only the first",
-                        len(toolCalls),
-                    )
-                    toolCalls = toolCalls[:1]
-
-                logger.info("TOOL ROUND %d calls=%d", toolRound, len(toolCalls))
-
-                # Only keep the assistant turn in history if it has real text.
-                # A tool-call-only message adds nothing the model needs later —
-                # the compact tool-result message appended right after it already
-                # records what action was taken and what happened.
-                if response.message.content and response.message.content.strip():
-                    self.messages.append(response.message)
-
-                for toolCall in toolCalls:
-                    callName = toolCall.function.name
-                    callArguments = dict(toolCall.function.arguments)
-
-                    result = self._call_tool(callName, callArguments)
-
-                    logger.info("TOOL RESULT name=%s result=%s", callName, result)
-
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_name": callName,
-                        "content": str(result),
-                    })
-
-                response = self._ask_model()
-
-
-            # Final response.
-            self.messages.append(response.message)
-
-            logger.info(
-                "MODEL END response=%s",
-                response.message.content,
-            )
-
-            self.player.sendMessage(
-                response.message.content
-            )
-
-
-        except Exception as error:
-            logger.exception(
-                "Ollama request failed"
-            )
-
-            self.player.sendMessage(
-                f"Ollama error: {error}"
-            )
-
-
-# ==============================================================
-# MAIN
-# ==============================================================
-
-if __name__ == "__main__":
-    logger.info(
-        "Starting AI with Ollama model %s",
-        MODEL,
-    )
-
-    try:
-        player = Player()
-
-        agent = OllamaAgent(player)
-
+    def startChatListener(self, callback):
         listener = ChatListener(
-            playerName=player.name,
-            logFile=os.path.abspath(
-                "./logs/latest.log"
-            ),
-            callback=agent.handle_message,
+            playerName=self.player.name,
+            logFile=os.path.abspath("./logs/latest.log"),
+            callback=callback,
         )
 
         listener.start()
 
         logger.info(
             "Chat listener started for player %s",
-            player.name,
+            self.player.name,
         )
 
-        print(
-            f"AI started with Ollama model: {agent.model}"
-        )
-
-        while True:
-            time.sleep(1)
-
-
-    except Exception:
-        logger.exception(
-            "Fatal startup/runtime error"
-        )
-
-        raise
+        return listener
