@@ -4,9 +4,6 @@ import time
 
 from ollama import Client
 
-from minecraft import MinecraftController
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +12,7 @@ MODEL = "gpt-oss:120b"
 OLLAMA_HOST = "http://192.168.0.122:11434"
 
 MAX_OUTPUT_TOKENS = int(
-    os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "256")
+    os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1024")
 )
 
 EMPTY_RESPONSE_RETRIES = int(
@@ -35,193 +32,114 @@ class OllamaAgent:
         model=MODEL,
     ):
         self.minecraft = minecraft
+        self.currentGoal = None
         self.player = minecraft.player
         self.model = model
 
         self.ollama = Client(
             host=OLLAMA_HOST,
         )
-
+        
+        self.tools = self.minecraft.getTools()
         self.messages = []
 
-        self.tools = self.minecraft.tools
+    def additionalContext(self) -> list[dict]:
+        playerSummary = self.player.getPlayerSummary()
 
-        self.additionalContext()
+        context = [
+            {
+                "role": "system",
+                "content": (
+                    "[AICRAFT_PLAYER_CONTEXT]\n"
+                    f"{playerSummary}"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[AICRAFT_PLANNER_CONTEXT]\n"
+                    "You are a Minecraft assistant playing on "
+                    "version 26.2.\n\n"
 
-    # ==========================================================
-    # CONTEXT MANAGEMENT
-    # ==========================================================
+                    "Use the available tools to perform actions "
+                    "in the world.\n"
 
-    def additionalContext(self, currentGoal=None):
-        if currentGoal is None:
-            currentGoal = (
-                self.minecraft.currentGoal
-                or "You dont have any current goals."
-            )
+                    "Never invent tool results.\n"
 
-        try:
-            playerSummary = self.player.getPlayerSummary()
+                    "If the tool you need is not available, use an alternative tool.\n"
 
-        except Exception as error:
-            logger.exception(
-                "Failed to get player summary"
-            )
+                    "When referencing blocks in tools, use the exact "
+                    "block tag including namespace, for example "
+                    "minecraft:stone or minecraft:oak_log.\n\n"
 
-            playerSummary = (
-                f"Unable to read player summary: {error}"
-            )
+                    "You are a multi-step planner.\n"
 
-        self.messages.append({
-            "role": "system",
-            "content": (
-                "[AICRAFT_WORLD_CONTEXT]\n"
-                "Current player/world information:\n"
-                f"{playerSummary}"
-            ),
-        })
+                    "If the user asks you to do something requiring "
+                    "multiple steps, plan out the steps and execute "
+                    "them one by one.\n"
 
-        self.messages.append({
-            "role": "system",
-            "content": (
-                "[AICRAFT_PLANNER_CONTEXT]\n"
-                "You are a Minecraft assistant playing on "
-                "version 26.2.\n\n"
+                    "Call exactly one tool per response.\n"
 
-                "Use the available tools to perform actions "
-                "in the world.\n"
+                    "Do not repeatedly call the same tool with the "
+                    "same arguments.\n"
 
-                "Never invent tool results.\n"
+                    "Never place a block at a coordinate that is "
+                    "already recorded in BUILD MEMORY.\n"
 
-                "After using tools, briefly explain what "
-                "happened.\n"
+                    "Do not claim a structure is finished without "
+                    "verifying it.\n"
 
-                "If the tool you need is not available, explain "
-                "that you cannot perform the action or use an "
-                "alternative tool.\n"
+                    "Track your progress using the building plan.\n"
 
-                "When referencing blocks in tools, use the exact "
-                "block tag including namespace, for example "
-                "minecraft:stone or minecraft:oak_log.\n\n"
-
-                "You are a multi-step planner.\n"
-
-                "If the user asks you to do something requiring "
-                "multiple steps, plan out the steps and execute "
-                "them one by one.\n"
-
-                "Call exactly one tool per response.\n"
-
-                "Wait for its result before choosing the next "
-                "tool.\n\n"
-
-                "IMPORTANT BUILDING RULES:\n"
-
-                "Never place a block at a coordinate that is "
-                "already recorded in BUILD MEMORY.\n"
-
-                "Do not repeatedly call the same tool with the "
-                "same arguments.\n"
-
-                "Do not claim a structure is finished without "
-                "verifying it.\n"
-
-                "A house should have a floor, walls, a door, "
-                "and a roof unless the user specifies otherwise.\n"
-
-                "Track your progress using the building plan.\n"
-
-                "If a building plan does not exist, create a "
-                "clear plan before building.\n\n"
-
-                f"CURRENT GOAL:\n{currentGoal}\n\n"
-
-                f"{self.minecraft.getBuildingContext()}"
-            ),
-        })
-
-    def removeLastContext(self):
-        contextMarkers = (
-            "[AICRAFT_WORLD_CONTEXT]",
-            "[AICRAFT_PLANNER_CONTEXT]",
-        )
-
-        self.messages[:] = [
-            message
-            for message in self.messages
-            if not (
-                message.get("role") == "system"
-                and any(
-                    message.get("content", "").startswith(marker)
-                    for marker in contextMarkers
-                )
-            )
+                    "If a building plan does not exist, create a "
+                    "clear plan before building.\n"
+                    
+                    "After fully completing a step, update the building plan before proceeding to the next step.\n\n"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "[AICRAFT_BUILDING_CONTEXT]\n"
+                    f"Current building plan:\n{self.minecraft.getBuildingPlan()}"
+                ),
+            },
         ]
-
-    def trimHistory(self):
-        if len(self.messages) <= MAX_HISTORY_MESSAGES:
-            return
-
-        systemMessages = [
-            message
-            for message in self.messages
-            if message.get("role") == "system"
-        ]
-
-        otherMessages = [
-            message
-            for message in self.messages
-            if message.get("role") != "system"
-        ]
-
-        remainingCount = max(
-            0,
-            MAX_HISTORY_MESSAGES - len(systemMessages),
-        )
-
-        self.messages[:] = (
-            systemMessages
-            + otherMessages[-remainingCount:]
-        )
-
-        logger.info(
-            "TRIMMED HISTORY messages=%d",
-            len(self.messages),
-        )
-
-    # ==========================================================
-    # MODEL REQUEST
-    # ==========================================================
+        if self.currentGoal:
+            context.append({
+                "role": "system",
+                "content": (
+                    "[AICRAFT_CURRENT_GOAL]\n"
+                    f"Current goal:\n{self.currentGoal}"
+                ),
+            })
+        return context
 
     def askModel(self):
         for attempt in range(
             EMPTY_RESPONSE_RETRIES + 1
         ):
-            self.removeLastContext()
-            self.additionalContext()
-            self.trimHistory()
-
             started = time.monotonic()
 
             logger.info(
                 "MODEL REQUEST START attempt=%d messages=%d",
                 attempt + 1,
-                len(self.messages),
+                len(self.messages+self.additionalContext()),
             )
 
             try:
                 response = self.ollama.chat(
                     model=self.model,
-                    messages=self.messages,
+                    messages=self.messages+self.additionalContext(),
                     tools=self.tools,
-                    think=False,
+                    think="low",
                     options={
                         "num_predict": MAX_OUTPUT_TOKENS,
-                        "temperature": 0.2,
+                        # "temperature": 0.2,
                     },
                 )
 
                 message = response.message
-
                 content = message.content or ""
                 toolCalls = message.tool_calls or []
 
@@ -262,7 +180,6 @@ class OllamaAgent:
                             "cannot be completed."
                         ),
                     })
-
                     continue
 
                 raise RuntimeError(
@@ -275,12 +192,7 @@ class OllamaAgent:
                     "MODEL REQUEST FAILED seconds=%.2f",
                     time.monotonic() - started,
                 )
-
                 raise
-
-    # ==========================================================
-    # CHAT HANDLING
-    # ==========================================================
 
     def handleMessage(self, message):
         message = message.strip()
@@ -293,21 +205,16 @@ class OllamaAgent:
             message,
         )
 
-        if self.minecraft.isDirectCommand(message):
-            logger.info(
-                "Executing direct command: %s",
-                message,
-            )
+        # if self.minecraft.isDirectCommand(message):
+        #     logger.info(
+        #         "Executing direct command: %s",
+        #         message,
+        #     )
 
-            self.minecraft.executeDirectCommand(message)
-            return
+        #     self.minecraft.executeDirectCommand(message)
+        #     return
 
-        self.minecraft.currentGoal = message
-        self.minecraft.buildVerified = False
-        self.minecraft.currentStep = None
-
-        self.removeLastContext()
-        self.additionalContext(message)
+        self.currentGoal = message
 
         self.messages.append({
             "role": "user",
@@ -349,19 +256,19 @@ class OllamaAgent:
                     len(toolCalls),
                 )
 
-                if (
-                    response.message.content
-                    and response.message.content.strip()
-                ):
-                    self.messages.append(
-                        response.message
-                    )
+                self.messages.append(response.message)  #< tool response
 
                 for toolCall in toolCalls:
                     callName = toolCall.function.name
 
                     callArguments = dict(
                         toolCall.function.arguments
+                    )
+
+                    logger.info(
+                        "TOOL CALL name=%s arguments=%s",
+                        callName,
+                        callArguments,
                     )
 
                     result = self.minecraft.callTool(
@@ -374,6 +281,9 @@ class OllamaAgent:
                         callName,
                         result,
                     )
+
+                    print("Result:", result)
+                    print("-" * 80)
 
                     self.messages.append({
                         "role": "tool",

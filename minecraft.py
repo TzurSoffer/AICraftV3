@@ -1,7 +1,5 @@
-import json
 import os
 import logging
-from collections import defaultdict
 
 from MCBridge import ChatListener, Player
 
@@ -22,19 +20,29 @@ class MinecraftController:
         self.brokenBlocks = set()
 
         # Building state.
-        self.currentGoal = None
         self.buildPlan = []
-        self.completedSteps = set()
-        self.currentStep = None
-        self.buildVerified = False
 
-        self.tools = self.createTools()
+        self.toolMap = {
+            "goto": self.player.goto,
+            "mine": self.player.mine,
+            "mineBlock": self.player.mineBlock,
+            "craft": self.player.craft,
+            "place": self.player.place,
+            "attack": self.player.attack,
+            "findEntities": self.player.findEntities,
+            "findNearbyMonsters": self.player.findNearbyMonsters,
+            "getPlayerSummary": self.player.getPlayerSummary,
+            "getBlock": self.player.getBlock,
+            "follow": self.player.follow,
+            "jump": self.player.jump,
+            "leftClick": self.player.leftClick,
+            "rightClick": self.player.rightClick,
+            "drop": self.player.drop,
+            "stop": self.player.stop,
+            "updateBuildingPlan": self.setBuildingPlan,
+        }
 
-    # ==========================================================
-    # TOOL DEFINITIONS
-    # ==========================================================
-
-    def createTools(self):
+    def getTools(self):
         return [
             {
                 "type": "function",
@@ -270,11 +278,23 @@ class MinecraftController:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "updateBuildingPlan",
+                    "description": (
+                        "Update the current building plan. Should be a list of steps needed to complete the current goal."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "required": ["plan"],
+                        "properties": {
+                            "plan": {"type": "string"},
+                        },
+                    },
+                },
+            },
         ]
-
-    # ==========================================================
-    # BUILDING MEMORY
-    # ==========================================================
 
     def formatCoordinates(self, x, y, z):
         return f"{x},{y},{z}"
@@ -287,7 +307,6 @@ class MinecraftController:
         )
 
         self.placedBlocks[coordinates] = blockType
-        self.buildVerified = False
 
         logger.info(
             "MEMORY PLACE block=%s coordinates=%s",
@@ -304,7 +323,6 @@ class MinecraftController:
 
         self.placedBlocks.pop(coordinates, None)
         self.brokenBlocks.add(coordinates)
-        self.buildVerified = False
 
         logger.info(
             "MEMORY BREAK coordinates=%s",
@@ -324,83 +342,18 @@ class MinecraftController:
         if not self.placedBlocks:
             return "No blocks placed yet."
 
-        blocksByType = defaultdict(int)
-
-        for blockType in self.placedBlocks.values():
-            blocksByType[blockType] += 1
-
-        counts = ", ".join(
-            f"{blockType}: {count}"
-            for blockType, count in blocksByType.items()
-        )
-
-        return (
-            f"Placed blocks: {len(self.placedBlocks)}. "
-            f"Block counts: {counts}"
-        )
-
-    def getRecentPlacedBlocks(self, limit=20):
-        if not self.placedBlocks:
-            return "No placed blocks."
-
-        recentBlocks = list(self.placedBlocks.items())[-limit:]
-
         return "\n".join(
             f"- {blockType} at "
             f"{self.formatCoordinates(*coordinates)}"
-            for coordinates, blockType in recentBlocks
+            for coordinates, blockType in self.placedBlocks.items()
         )
 
-    # ==========================================================
-    # BUILD PLAN
-    # ==========================================================
+    def setBuildingPlan(self, plan):
+        self.buildPlan = plan
+        logger.info(f"BUILD PLAN UPDATED {plan}")
 
-    def setBuildingPlan(self, goal, steps=None):
-        self.currentGoal = goal
-        self.buildPlan = steps or []
-
-        self.completedSteps = set()
-        self.currentStep = None
-        self.buildVerified = False
-
-        logger.info(
-            "BUILD PLAN CREATED goal=%s steps=%s",
-            goal,
-            self.buildPlan,
-        )
-
-    def getBuildingContext(self):
-        if not self.currentGoal:
-            return "No active building goal."
-
-        plan = "\n".join(
-            f"{index + 1}. {step}"
-            for index, step in enumerate(self.buildPlan)
-        )
-
-        completed = ", ".join(
-            str(step)
-            for step in sorted(self.completedSteps)
-        )
-
-        currentStep = self.currentStep or "Not selected"
-
-        return (
-            f"CURRENT BUILDING GOAL: {self.currentGoal}\n"
-            f"BUILDING PLAN:\n"
-            f"{plan or 'No plan created yet.'}\n"
-            f"COMPLETED STEPS: "
-            f"{completed or 'None'}\n"
-            f"CURRENT STEP: {currentStep}\n"
-            f"BUILD VERIFIED: {self.buildVerified}\n"
-            f"BUILD MEMORY: {self.getBuildingMemory()}\n"
-            f"RECENT PLACEMENTS:\n"
-            f"{self.getRecentPlacedBlocks()}"
-        )
-
-    # ==========================================================
-    # COMPACT TOOL RESULTS
-    # ==========================================================
+    def getBuildingPlan(self):
+        return self.buildPlan
 
     def formatToolResult(self, name, arguments, result):
         x = arguments.get("x")
@@ -487,16 +440,7 @@ class MinecraftController:
                 f"{arguments.get('action', 'action')}"
             )
 
-        if name in {
-            "findEntities",
-            "findNearbyMonsters",
-            "getPlayerSummary",
-            "getBlock",
-            "follow",
-        }:
-            return self.compactInformationResult(result)
-
-        if isinstance(result, dict):
+        if type(result) == dict:
             if result.get("ok") is False:
                 return (
                     f"tool failed: "
@@ -505,106 +449,13 @@ class MinecraftController:
 
             return "tool completed successfully"
 
-        if isinstance(result, str):
-            return result[:500]
+        if type(result) == str:
+            return result
 
         return "tool completed successfully"
 
-    def compactInformationResult(self, result):
-        if result is None:
-            return "No information returned."
-
-        if isinstance(result, str):
-            return result[:1500]
-
-        if isinstance(result, (int, float, bool)):
-            return str(result)
-
-        if isinstance(result, list):
-            if not result:
-                return "No results."
-
-            compactResults = result[:20]
-
-            return json.dumps(
-                compactResults,
-                default=str,
-            )[:3000]
-
-        if isinstance(result, dict):
-            if result.get("ok") is False:
-                return json.dumps(
-                    result,
-                    default=str,
-                )[:1500]
-
-            usefulKeys = {
-                "block",
-                "blockName",
-                "blockType",
-                "name",
-                "type",
-                "x",
-                "y",
-                "z",
-                "distance",
-                "entityType",
-                "entities",
-                "position",
-                "biome",
-                "health",
-                "hunger",
-                "inventory",
-            }
-
-            compactResult = {
-                key: value
-                for key, value in result.items()
-                if key in usefulKeys
-            }
-
-            if compactResult:
-                return json.dumps(
-                    compactResult,
-                    default=str,
-                )[:3000]
-
-            return json.dumps(
-                result,
-                default=str,
-            )[:1500]
-
-        return str(result)[:1500]
-
-    # ==========================================================
-    # TOOL EXECUTION
-    # ==========================================================
-
     def callTool(self, name, arguments):
-        logger.info(
-            "TOOL START name=%s arguments=%s",
-            name,
-            arguments,
-        )
-
-        toolMap = {
-            "goto": self.player.goto,
-            "mine": self.player.mine,
-            "mineBlock": self.player.mineBlock,
-            "craft": self.player.craft,
-            "place": self.player.place,
-            "attack": self.player.attack,
-            "findEntities": self.player.findEntities,
-            "findNearbyMonsters": self.player.findNearbyMonsters,
-            "getPlayerSummary": self.player.getPlayerSummary,
-            "getBlock": self.player.getBlock,
-            "follow": self.player.follow,
-            "jump": self.player.jump,
-            "leftClick": self.player.leftClick,
-            "rightClick": self.player.rightClick,
-            "drop": self.player.drop,
-            "stop": self.player.stop,
-        }
+        logger.info(f"TOOL START name={name} arguments={arguments}")
 
         if name == "simpleAction":
             name = arguments.pop("action")
@@ -638,14 +489,14 @@ class MinecraftController:
                     "choose another position"
                 )
 
-        if name not in toolMap:
+        if name not in self.toolMap:
             return {
                 "ok": False,
                 "error": f"Unknown tool: {name}",
             }
 
         try:
-            result = toolMap[name](**arguments)
+            result = self.toolMap[name](**arguments)
 
         except Exception as error:
             logger.exception(
@@ -695,10 +546,6 @@ class MinecraftController:
             arguments,
             result,
         )
-
-    # ==========================================================
-    # MINECRAFT CHAT
-    # ==========================================================
 
     def isDirectCommand(self, message):
         return message.split(maxsplit=1)[0] in (
