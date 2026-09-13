@@ -1,69 +1,17 @@
 import math
-import re
+import json
+import logging
+import os
 import shlex
 import time
 import threading
+
 import minescript as m
 
 
-class ChatListener:
-    def __init__(
-        self,
-        playerName,
-        logFile: str = "../logs/latest.log",
-        callback=None,
-    ):
-        self.run = False
-        self.latest = ""
-        self.logFile = logFile
-        self.chatPrefix = f"[Render thread/INFO]: [CHAT] <{playerName}> "
-        self.chatPrefixLength = len(self.chatPrefix)
-        if callback is not None:
-            self.callback = callback
-    
-    def start(self):
-        self.run = True
-        threading.Thread(target=self.startListener).start()
-    
-    def stop(self):
-        self.run = False
-    
-    def callback(self, message):
-        print(message)
-    
-    def _getLatestChat(self):
-        with open(self.logFile, 'r') as f:
-            lines = f.readlines()
-            if len(lines) > 0:
-                return(lines[-1].strip())
-            else:
-                return(None)
-    
-    def waitForChat(self, prefix, timeout=5, pollInterval=0.1):
-        beginTime = time.time()
-        while time.time() - beginTime < timeout:
-            latest = self._getLatestChat()
-            if len(latest) > 11 and latest[11:][:self.chatPrefixLength] == prefix:
-                return latest[self.chatPrefixLength:]
-            time.sleep(pollInterval)
-        return None
-    
-    def startListener(self):
-        while self.run:
-            time.sleep(0.3) #< needs to be at start cause of "continue" statements below
-            latest = self._getLatestChat()
-            if latest != self.latest:
-                self.latest = latest
-                if len(latest) < 11:
-                    continue
-                latest = latest[11:]
-                if latest[:self.chatPrefixLength] != self.chatPrefix:
-                    continue
-                latest = latest[self.chatPrefixLength:]
-                # print("yipi")
+logger = logging.getLogger(__name__)
+BARITONE_COMMAND_TIMEOUT = float(os.getenv("BARITONE_COMMAND_TIMEOUT", "60"))
 
-                self.callback(latest)
-                self.latest = latest
 
 """
 player_inventory_select_slot
@@ -85,11 +33,75 @@ press_key_bind
 Valid values of key_mapping_name include: “key.advancements”, “key.attack”, “key.back”, “key.chat”, “key.command”, “key.drop”, “key.forward”, “key.fullscreen”, “key.hotbar.1”, “key.hotbar.2”, “key.hotbar.3”, “key.hotbar.4”, “key.hotbar.5”, “key.hotbar.6”, “key.hotbar.7”, “key.hotbar.8”, “key.hotbar.9”, “key.inventory”, “key.jump”, “key.left”, “key.loadToolbarActivator”, “key.pickItem”, “key.playerlist”, “key.right”, “key.saveToolbarActivator”, “key.screenshot”, “key.smoothCamera”, “key.sneak”, “key.socialInteractions”, “key.spectatorOutlines”, “key.sprint”, “key.swapOffhand”, “key.togglePerspective”, “key.use”
 """
 
+class ChatListener:
+    def __init__(
+        self,
+        playerName,
+        logFile: str = "../logs/latest.log",
+        callback=None,
+    ):
+        self.run = False
+        self.latest = ""
+        self.logFile = logFile
+        self.sendMessagePrefix = f"[Render thread/INFO]: [CHAT] <{playerName}> "
+        self.sendMessagePrefixLength = len(self.sendMessagePrefix)
+        if callback is not None:
+            self.callback = callback
+    
+    def start(self):
+        self.run = True
+        threading.Thread(target=self.startListener).start()
+    
+    def stop(self):
+        self.run = False
+    
+    def callback(self, message):
+        print(message)
+    
+    def _getLatestChat(self):
+        with open(self.logFile, 'r') as f:
+            lines = f.readlines()
+            if len(lines) > 0:
+                return(lines[-1].strip())
+            else:
+                return(None)
+
+    def waitForChat(self, prefix, timeout=5, pollInterval=0.1):
+        beginTime = time.time()
+        while time.time() - beginTime < timeout:
+            latest = self._getLatestChat()
+            if latest != self.latest and len(latest) > 11 and latest[11:][:len(prefix)] == prefix:
+                self.latest = latest
+                return latest[len(prefix)+12:]
+            time.sleep(pollInterval)
+        return None
+    
+    def startListener(self):
+        logger.info("Chat listener reading %s", self.logFile)
+        while self.run:
+            try:
+                time.sleep(0.3) #< needs to be at start cause of "continue" statements below
+                latest = self._getLatestChat()
+                if latest != self.latest:
+                    self.latest = latest
+                    if len(latest) < 11:
+                        continue
+                    latest = latest[11:]
+                    if latest[:self.sendMessagePrefixLength] != self.sendMessagePrefix:
+                        continue
+                    latest = latest[self.sendMessagePrefixLength:]
+                    logger.info("Chat command received: %s", latest)
+                    self.callback(latest)
+                    self.latest = latest
+            except Exception:
+                logger.exception("Chat listener failed while reading Minecraft log")
+
 class Player:
     def __init__(self):
         self.currentSlot = None
         self.running = False
 
+        reName = r"\s*[a-zA-Z0-9_:.-]+\s*"
         self.commandTemplates = {
             "goto": r"\s*-?\d+\s*,\s*-?\d+\s*,\s*-?\d+\s*",
             "jump": r"",
@@ -98,9 +110,11 @@ class Player:
                 r"\s*[a-zA-Z0-9:_-]+\s*,\s*"
                 r"-?\d+\s*,\s*-?\d+\s*,\s*-?\d+\s*"
             ),
-            "attack": r"\s*[a-zA-Z0-9_:.-]+\s*",
-            "findBlock": r"\s*[a-zA-Z0-9_:.-]+\s*",
-            "findEntity": r"\s*[a-zA-Z0-9_:.-]+\s*",
+            "attack": reName,
+            # "findBlock": reName,
+            "findStructure": reName,
+            "findEntity": reName,
+            "craft": reName,
             "rightClick": r"",
             "leftClick": r"",
             "drop": r"",
@@ -108,11 +122,14 @@ class Player:
             "chat": r".+",
             "lookAt": r"\s*-?\d+\s*,\s*-?\d+\s*,\s*-?\d+\s*",
             "follow": r"\s*\w+\s*",
-            "findPath": r"\s*[a-zA-Z0-9_:.-]+\s*",
+            "surroundingEntities": r"",
             "stop": r"",
             "summary": r"",
             "DONE": r"",
         }
+        
+        self.name = m.player_name()
+        self.chat = ChatListener(playerName=self.name, logFile=os.path.abspath("./logs/latest.log"))
 
     def _player(self):
         return m.player()
@@ -124,15 +141,15 @@ class Player:
         return math.sqrt(
             sum((a[i] - b[i]) ** 2 for i in range(3))
         )
+    
+    def _entityType(self, entity):
+        return str(getattr(entity, "type", "unknown")).lower()
 
     def _entityName(self, entity):
         return str(
             getattr(entity, "name", None)
             or getattr(entity, "type", "unknown")
         )
-
-    def _entityType(self, entity):
-        return str(getattr(entity, "type", "unknown")).lower()
 
     def _entityPosition(self, entity):
         return list(entity.position)
@@ -147,6 +164,11 @@ class Player:
 
     def _normaliseEntityName(self, entity):
         return str(entity).lower().replace("minecraft:", "")
+    
+    def _waitForCommand(self, timeout=5, pollInterval=0.1):
+        return self.chat.waitForChat("[Render thread/INFO]: [System] [CHAT]", timeout, pollInterval)
+    def _waitForBaritone(self, timeout=5, pollInterval=0.1):
+        return self.chat.waitForChat("[Render thread/INFO]: [CHAT]", timeout, pollInterval)
 
     def getInventory(self):
         inventory = {}
@@ -274,18 +296,28 @@ class Player:
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel replace {blockType} air")
         m.chat("#sel clear")
-
-    def findPath(self, blockType):
+        deadline = time.time() + BARITONE_COMMAND_TIMEOUT
+        while time.time() < deadline:
+            response = self._waitForBaritone()
+            if response == "[Baritone] Done building":
+                return "Mined block successfully."
+        return f"Mining timed out after {BARITONE_COMMAND_TIMEOUT:g} seconds."
+    
+    def mineBlock(self, total, blockName):
         """
-        Ask Baritone to find a block type.
+        Mine the requested block until the player has the requested amount in their inventory.
 
         Example:
-            findPath("diamond_ore")
+            mineBlock(5, "minecraft:diamond_ore")
         """
-
-        blockType = self._normaliseBlockName(blockType)
-
-        m.chat(f"#find {blockType}")
+        m.chat(f"#mine {total} {blockName}")
+        deadline = time.time() + BARITONE_COMMAND_TIMEOUT
+        while time.time() < deadline:
+            response = self._waitForBaritone()
+            if type(response) == str and response.startswith("[Baritone] Have "):
+                print(f"Have {total} {blockName} in inventory.")
+                return "Mined blocks successfully."
+        return f"Mining timed out after {BARITONE_COMMAND_TIMEOUT:g} seconds."
 
     def surroundingEntities(self):
         entities = []
@@ -471,7 +503,7 @@ class Player:
         entities = self.findEntities(entityType, radius)
 
         if not entities:
-            self.chat("No matching entity nearby.")
+            self.sendMessage("No matching entity nearby.")
             return None
 
         target = entities[0]
@@ -491,7 +523,7 @@ class Player:
         )
 
         if not monsters:
-            self.chat("No monster nearby.")
+            self.sendMessage("No monster nearby.")
             return None
 
         target = monsters[0]
@@ -531,21 +563,32 @@ class Player:
         m.player_press_drop(True)
         time.sleep(0.1)
         m.player_press_drop(False)
+    
+    def craft(self, itemName):
+        m.execute(f"/craft {itemName}")
+        return self._waitForCommand()
 
     def chooseSlot(self, slot):
         m.player_inventory_select_slot(int(slot))
 
     def place(self, blockType, x, y, z):
         blockType = self._normaliseBlockName(blockType)
+        currentBlock = self.getBlock(x, y, z)
 
         m.chat(f"#sel pos1 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
-        m.chat(f"#sel replace air {blockType}")
+        m.chat(f"#sel replace {currentBlock} {blockType}")
         m.chat("#sel clear")
+        deadline = time.time() + BARITONE_COMMAND_TIMEOUT
+        while time.time() < deadline:
+            response = self._waitForBaritone()
+            if response == "[Baritone] Done building":
+                return "Placed block successfully."
+        return f"Placement timed out after {BARITONE_COMMAND_TIMEOUT:g} seconds."
 
-    def chat(self, message):
-        if isinstance(message, list):
-            message = " ".join(message)
+    def sendMessage(self, message):
+        if isinstance(message, (dict, list)):
+            message = json.dumps(message, default=str)
 
         m.echo(str(message))
 
@@ -582,40 +625,14 @@ class Player:
 
         m.player_set_orientation(yaw, pitch)
 
-    def getNearbyStructures(self):
-        """
-        Returns structure locations.
-
-        MineScript does not necessarily expose a direct
-        structure-query function. Use /locate through chat
-        to find structures.
-
-        The exact command must be handled by your
-        Minecraft/Baritone integration.
-        """
-
-        structures = [
-            "village",
-            "stronghold",
-            "mineshaft",
-            "ancient_city",
-            "woodland_mansion",
-            "ocean_monument",
-            "desert_pyramid",
-            "jungle_pyramid",
-            "shipwreck",
-            "ruined_portal",
-            "pillager_outpost",
-            "trial_chambers",
-        ]
-
-        return {
-            "available": structures,
-            "note": (
-                "Use /locate structure <name> to get "
-                "the nearest structure coordinates."
-            ),
-        }
+    def findStructure(self, structureType):
+        """ return the nearest structure of the given type. """
+        m.execute("/locate structure " + structureType)
+        response = self._waitForCommand()
+        if "[" in response:
+            coordinates = f"{structureType} found at: ({response[response.find('[')+1:response.find(']')]})"
+            return coordinates
+        return f"No {structureType} found."
 
     def getPlayerSummary(self):
         """
@@ -628,7 +645,6 @@ class Player:
             - Hunger
             - Inventory
             - Nearby monsters
-            - Nearby structure types
         """
 
         player = self._player()
@@ -655,9 +671,9 @@ class Player:
                 zRadius=3,
             ),
 
-            "nearbyStructures": self.getNearbyStructures(),
-
             "inventory": self.getInventory(),
+            
+            "surroundingEntities": self.surroundingEntities(),
         }
 
         return summary
@@ -677,7 +693,10 @@ class Player:
                     self.mine(*args)
                 
                 elif commandName == "mineBlock":
-                    self.mine(*args)
+                    self.mineBlock(*args)
+                
+                elif commandName == "craft":
+                    self.craft(*args)
 
                 elif commandName == "place":
                     self.place(*args)
@@ -698,7 +717,7 @@ class Player:
                     self.chooseSlot(*args)
 
                 elif commandName == "chat":
-                    self.chat(*args)
+                    self.sendMessage(*args)
 
                 elif commandName == "attack":
                     self.attack(*args)
@@ -708,34 +727,39 @@ class Player:
 
                 # elif commandName == "findBlock":
                 #     result = self.findBlock(*args)
-                #     self.chat(result)
+                #     self.sendMessage(result)
 
                 # elif commandName == "findNearestBlock":
                 #     result = self.findNearestBlock(*args)
-                #     self.chat(result)
+                #     self.sendMessage(result)
 
                 elif commandName == "findEntity":
                     result = self.findEntities(*args)
-                    self.chat(result)
+                    self.sendMessage(result)
+
+                elif commandName == "surroundingEntities":
+                    result = self.surroundingEntities()
+                    self.sendMessage(result)
+                
+                elif commandName == "findStructure":
+                    result = self.findStructure(*args)
+                    self.sendMessage(result)
 
                 elif commandName == "findMonsters":
                     result = self.findNearbyMonsters(*args)
-                    self.chat(result)
+                    self.sendMessage(result)
 
                 elif commandName == "summary":
                     result = self.getPlayerSummary()
-                    self.chat(result)
+                    self.sendMessage(result)
 
                 elif commandName == "getInventory":
                     result = self.getInventory()
-                    self.chat(result)
+                    self.sendMessage(result)
 
                 elif commandName == "getBlock":
                     result = self.getBlock(*args)
-                    self.chat(result)
-
-                elif commandName == "findPath":
-                    self.findPath(*args)
+                    self.sendMessage(result)
 
                 elif commandName == "follow":
                     self.follow(*args)
@@ -747,7 +771,7 @@ class Player:
                     self.lookAt(*args)
 
                 elif commandName == "DONE":
-                    self.chat("DONE!")
+                    self.sendMessage("DONE!")
 
                 else:
                     print(f"Unknown command: {commandName}")
@@ -771,15 +795,12 @@ class Player:
             return
 
         try:
-            parts = shlex.split(message)
+            parts = message.split(" ")
         except ValueError as error:
-            self.chat(f"Invalid command: {error}")
+            self.sendMessage(f"Invalid command: {error}")
             return
 
         commandName = parts[0]
-        if commandName not in self.commandTemplates:
-            self.chat(f"Unknown command: {commandName}")
-            return
 
         if commandName == "chat":
             args = [message[len(commandName):].strip()]
@@ -795,7 +816,7 @@ if __name__ == "__main__":
     player = Player()
 
     listener = ChatListener(
-        playerName=m.player_name(),
+        playerName=player.name,
         logFile=os.path.abspath("./logs/latest.log"),
         callback=player.handleChat,
     )
