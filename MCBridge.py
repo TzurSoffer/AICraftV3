@@ -644,7 +644,7 @@ class Player:
             - Health
             - Hunger
             - Inventory
-            - Nearby monsters
+            # - Nearby monsters
         """
 
         player = self._player()
@@ -673,7 +673,7 @@ class Player:
 
             "inventory": self.getInventory(),
             
-            "surroundingEntities": self.surroundingEntities(),
+            # "surroundingEntities": self.surroundingEntities(),
         }
 
         return summary

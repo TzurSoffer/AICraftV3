@@ -267,7 +267,8 @@ class OllamaAgent:
                 "When referencing blocks in tools, use the exact block tag including namespace, e.g. minecraft:stone, minecraft:oak_log, etc."
                 "You are also a multi-step planner. If the user asks you to do something that requires multiple steps, you should plan out the steps and then execute them one by one."
                 "Call exactly one tool per response. Wait for its result before choosing the next tool."
-                "Your current goal is: " + currentGoal
+                f"Your current goal is: {currentGoal}"
+                "Do not call the same command twice in a row unless it is necessary to achieve the goal. "
             ),
         })
 
@@ -291,7 +292,9 @@ class OllamaAgent:
 
     def _ask_model(self):
         for attempt in range(EMPTY_RESPONSE_RETRIES + 1):
-            print(self.messages)
+            self.remove_last_context()
+            self.additional_context()
+            # logger.info("Asking model with messages:", self.messages)
 
             started = time.monotonic()
 
@@ -387,22 +390,29 @@ class OllamaAgent:
             response = self._ask_model()
 
             tool_round = 0
+
             while response.message.tool_calls:
                 tool_round += 1
-                if len(response.message.tool_calls) > 1:
+
+                tool_calls = response.message.tool_calls
+
+                if len(tool_calls) > 1:
                     logger.warning(
-                        "MODEL returned %d tool calls; executing only the first and replanning",
-                        len(response.message.tool_calls),
+                        "MODEL returned %d tool calls; executing only the first",
+                        len(tool_calls),
                     )
-                    response.message.tool_calls = response.message.tool_calls[:1]
+                    tool_calls = tool_calls[:1]
+
                 logger.info(
                     "TOOL ROUND %d calls=%d",
                     tool_round,
-                    len(response.message.tool_calls),
+                    len(tool_calls),
                 )
 
+                # Preserve the assistant's tool call message.
                 self.messages.append(response.message)
-                for tool_call in response.message.tool_calls:
+
+                for tool_call in tool_calls:
                     call_name = tool_call.function.name
                     call_arguments = dict(tool_call.function.arguments)
 
@@ -410,25 +420,20 @@ class OllamaAgent:
                         call_name,
                         call_arguments,
                     )
+
+                    logger.info(
+                        "TOOL RESULT name=%s result=%s",
+                        call_name,
+                        result,
+                    )
+
                     self.messages.append({
                         "role": "tool",
                         "tool_name": call_name,
                         "content": json.dumps(result, default=str),
                     })
-                    self.messages.append({
-                        "role": "user",
-                        "content": (
-                            f"Command {call_name} finished with result: "
-                            f"{json.dumps(result, default=str)}. "
-                            "If ok is false, fix the arguments or choose an alternative tool "
-                            "before retrying. This command is only one step of the original user request. "
-                            "Prompt yourself for the next step and keep using tools until the original "
-                            "request is fully satisfied. Do not report completion just because this one "
-                            "command finished. Only give a final response when the entire request is done "
-                            "or cannot be completed."
-                        ),
-                    })
 
+                # Ask Ollama to produce the next tool call or final answer.
                 response = self._ask_model()
 
             self.messages.append(response.message)
