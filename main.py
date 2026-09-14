@@ -19,6 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     encoding="utf-8",
+    force=True,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def main():
 
     minecraft.startChatListener(
         callback=agent.handleMessage,
+        controlledByPlayerName="NotALinuxUser"
     )
 
     print(

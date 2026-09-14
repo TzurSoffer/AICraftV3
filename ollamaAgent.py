@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -41,7 +42,24 @@ class OllamaAgent:
         )
         
         self.tools = self.minecraft.getTools()
+        self.tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "FINISHED",
+                    "description": "The last tool to call only when the current goal is fully completed.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["finalMessage"],
+                        "properties": {
+                            "finalMessage": {"type": "string"}
+                        },
+                    },
+                },
+            }
+        )
         self.messages = []
+        self.run = False
 
     def additionalContext(self) -> list[dict]:
         playerSummary = self.player.getPlayerSummary()
@@ -120,17 +138,22 @@ class OllamaAgent:
             EMPTY_RESPONSE_RETRIES + 1
         ):
             started = time.monotonic()
+            requestMessages = self.messages + self.additionalContext()
 
             logger.info(
                 "MODEL REQUEST START attempt=%d messages=%d",
                 attempt + 1,
-                len(self.messages+self.additionalContext()),
+                len(requestMessages),
+            )
+            logger.info(
+                "MODEL REQUEST HISTORY %s",
+                json.dumps(requestMessages, default=str),
             )
 
             try:
                 response = self.ollama.chat(
                     model=self.model,
-                    messages=self.messages+self.additionalContext(),
+                    messages=requestMessages,
                     tools=self.tools,
                     think="low",
                     options={
@@ -157,6 +180,11 @@ class OllamaAgent:
                     len(toolCalls),
                     len(content),
                     len(thinking),
+                )
+
+                logger.info(
+                    "MODEL RESPONSE %s",
+                    json.dumps(response.message, default=str),
                 )
 
                 if toolCalls or content.strip():
@@ -194,11 +222,16 @@ class OllamaAgent:
                 )
                 raise
 
-    def handleMessage(self, message):
+    def handleMessage(self, message, setGoal=True):
         message = message.strip()
 
         if not message:
             return
+
+        if message == "stop":
+            self.run = False
+            return
+        self.run = True
 
         logger.info(
             "Received chat message: %s",
@@ -213,8 +246,9 @@ class OllamaAgent:
 
         #     self.minecraft.executeDirectCommand(message)
         #     return
-
-        self.currentGoal = message
+        
+        if setGoal:
+            self.currentGoal = message
 
         self.messages.append({
             "role": "user",
@@ -270,6 +304,21 @@ class OllamaAgent:
                         callName,
                         callArguments,
                     )
+                    
+                    if callName == "FINISHED":
+                        finalMessage = callArguments.get(
+                            "finalMessage",
+                            "Task completed.",
+                        )
+
+                        logger.info(
+                            "TOOL FINISHED finalMessage=%s",
+                            finalMessage,
+                        )
+
+                        self.minecraft.sendMessage(response.message.content)
+                        self.run = False
+                        return
 
                     result = self.minecraft.callTool(
                         callName,
@@ -300,9 +349,13 @@ class OllamaAgent:
                 response.message.content,
             )
 
-            self.minecraft.sendMessage(
-                response.message.content
+            logger.info(
+                "CONVERSATION HISTORY %s",
+                json.dumps(self.messages, default=str),
             )
+
+            if self.run and not response.message.tool_calls:
+                self.handleMessage(response.message.content, setGoal=False)
 
         except Exception as error:
             logger.exception(

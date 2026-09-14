@@ -351,6 +351,7 @@ class MinecraftController:
     def setBuildingPlan(self, plan):
         self.buildPlan = plan
         logger.info(f"BUILD PLAN UPDATED {plan}")
+        return "Building plan updated."
 
     def getBuildingPlan(self):
         return self.buildPlan
@@ -558,9 +559,12 @@ class MinecraftController:
     def sendMessage(self, message):
         self.player.sendMessage(message)
 
-    def startChatListener(self, callback):
+    def startChatListener(self, callback, controlledByPlayerName=None):
+        name = controlledByPlayerName
+        if controlledByPlayerName is None:
+            name = self.player.name
         listener = ChatListener(
-            playerName=self.player.name,
+            playerName=name,
             logFile=os.path.abspath("./logs/latest.log"),
             callback=callback,
         )
@@ -569,7 +573,7 @@ class MinecraftController:
 
         logger.info(
             "Chat listener started for player %s",
-            self.player.name,
+            name,
         )
 
         return listener

@@ -50,7 +50,11 @@ class ChatListener:
     
     def start(self):
         self.run = True
-        threading.Thread(target=self.startListener).start()
+        threading.Thread(
+            target=self.startListener,
+            name="minecraft-chat-listener",
+            daemon=False,
+        ).start()
     
     def stop(self):
         self.run = False
@@ -816,7 +820,8 @@ if __name__ == "__main__":
     player = Player()
 
     listener = ChatListener(
-        playerName=player.name,
+        # playerName=player.name,
+        playerName="NotALinuxUser",
         logFile=os.path.abspath("./logs/latest.log"),
         callback=player.handleChat,
     )
