@@ -568,9 +568,11 @@ class Player:
         time.sleep(0.1)
         m.player_press_drop(False)
     
-    def craft(self, itemName):
+    def craft(self, itemName, waitForCompletion=True):
         m.execute(f"/craft {itemName}")
-        return self._waitForCommand()
+        if waitForCompletion:
+            return self._waitForCommand()
+        return "Craft command done."
 
     def chooseSlot(self, slot):
         m.player_inventory_select_slot(int(slot))

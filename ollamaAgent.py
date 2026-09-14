@@ -13,7 +13,7 @@ MODEL = "gpt-oss:120b"
 OLLAMA_HOST = "http://192.168.0.122:11434"
 
 MAX_OUTPUT_TOKENS = int(
-    os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1024")
+    os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "4096")
 )
 
 EMPTY_RESPONSE_RETRIES = int(
@@ -94,12 +94,36 @@ class OllamaAgent:
 
                     "If the user asks you to do something requiring "
                     "multiple steps, plan out the steps and execute "
-                    "them one by one.\n"
+                    "them in order.\n"
 
-                    "Call exactly one tool per response.\n"
+                    "You can call the same tool multiple times, but only if it makes logical sense.\n"
+                    "eg. if you need to place multiple blocks, you can return multiple place calls in one response.\n"
+
+                    "For repeated placements, mining, or crafting, prefer the batch tools placeBlocks, mineBlocks, and craftItems.\n"
+                    "Never put more than 16 blocks in one placeBlocks call or more than 16 coordinates in one mineBlocks call. For larger jobs, make multiple tool calls with complete JSON in each call. Never abbreviate JSON with ... .\n"
+                    "For craftItems, provide one itemName and a count. The count means how many times to run the craft operation, not the total number of output items.\n"
+                    "Tool arguments must be strict JSON. Never include // comments, /* */ comments, markdown, labels, or trailing commas. Only provide the required arguments.\n"
+                    
+                    "Batch tool examples:\n"
+                    "Valid JSON examples: placeBlocks {\"blocks\":[{\"blockType\":\"minecraft:stone\",\"x\":10,\"y\":64,\"z\":10},{\"blockType\":\"minecraft:stone\",\"x\":11,\"y\":64,\"z\":10}]}\n"
+                    "mineBlocks {\"coordinates\":[{\"x\":10,\"y\":64,\"z\":10},{\"x\":11,\"y\":64,\"z\":10}]}\n"
+                    "craftItems {\"itemName\":\"minecraft:oak_planks\",\"count\":4} means invoke craft four times; it does not mean four output items.\n"
+
+                    "After craftItems, use its lastResult and inventoryCount to know the final craft result and how many matching items are currently in inventory.\n"
+
+                    "Batch tool items are executed sequentially in the order provided.\n"
+
+                    "When several actions are already known and do not "
+                    "depend on each other's results, return all of their "
+                    "tool calls in the same response. The controller will "
+                    "execute them sequentially and provide each result.\n"
+
+                    "If a later action depends on an earlier result, "
+                    "return only the next required tool call and wait for "
+                    "its result.\n"
 
                     "Do not repeatedly call the same tool with the "
-                    "same arguments.\n"
+                    "same arguments unless needed (crafting something multiple times).\n"
 
                     "Never place a block at a coordinate that is "
                     "already recorded in BUILD MEMORY.\n"
@@ -111,6 +135,8 @@ class OllamaAgent:
 
                     "If a building plan does not exist, create a "
                     "clear plan before building.\n"
+                    
+                    "If asking to build a 5x5 oak house, first mine 25 oak logs, then craft them into planks, then build the house\n"
                     
                     "After fully completing a step, update the building plan before proceeding to the next step.\n\n"
                 ),
@@ -155,10 +181,10 @@ class OllamaAgent:
                     model=self.model,
                     messages=requestMessages,
                     tools=self.tools,
-                    think="low",
+                    think="medium",
                     options={
-                        "num_predict": MAX_OUTPUT_TOKENS,
-                        # "temperature": 0.2,
+                        # Leave output length uncapped so large batch JSON
+                        # arguments are not truncated with an ellipsis.
                     },
                 )
 
@@ -275,15 +301,6 @@ class OllamaAgent:
 
                 toolCalls = response.message.tool_calls
 
-                if len(toolCalls) > 1:
-                    logger.warning(
-                        "MODEL returned %d tool calls; "
-                        "executing only the first",
-                        len(toolCalls),
-                    )
-
-                    toolCalls = toolCalls[:1]
-
                 logger.info(
                     "TOOL ROUND %d calls=%d",
                     toolRound,
@@ -316,7 +333,7 @@ class OllamaAgent:
                             finalMessage,
                         )
 
-                        self.minecraft.sendMessage(response.message.content)
+                        self.minecraft.sendMessage(finalMessage)
                         self.run = False
                         return
 
@@ -346,7 +363,7 @@ class OllamaAgent:
 
             logger.info(
                 "MODEL END response=%s",
-                response.message.content,
+                finalMessage,
             )
 
             logger.info(

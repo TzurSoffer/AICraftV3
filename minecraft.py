@@ -124,6 +124,72 @@ class MinecraftController:
             {
                 "type": "function",
                 "function": {
+                    "name": "placeBlocks",
+                    "description": (
+                        "Place multiple blocks sequentially. Use this "
+                        "when two or more placements are needed. "
+                        "Arguments must be strict JSON with no comments."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "required": ["blocks"],
+                        "properties": {
+                            "blocks": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "blockType",
+                                        "x",
+                                        "y",
+                                        "z",
+                                    ],
+                                    "properties": {
+                                        "blockType": {"type": "string"},
+                                        "x": {"type": "integer"},
+                                        "y": {"type": "integer"},
+                                        "z": {"type": "integer"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "mineBlocks",
+                    "description": (
+                        "Mine multiple blocks sequentially. Use this "
+                        "when two or more coordinates are known. "
+                        "Arguments must be strict JSON with no comments."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "required": ["coordinates"],
+                        "properties": {
+                            "coordinates": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {
+                                    "type": "object",
+                                    "required": ["x", "y", "z"],
+                                    "properties": {
+                                        "x": {"type": "integer"},
+                                        "y": {"type": "integer"},
+                                        "z": {"type": "integer"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "attack",
                     "description": "Attack the nearest matching entity.",
                     "parameters": {
@@ -274,6 +340,26 @@ class MinecraftController:
                         "required": ["itemName"],
                         "properties": {
                             "itemName": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "craftItems",
+                    "description": (
+                        "Craft the same item repeatedly. The count is "
+                        "the number of times to run the craft operation, "
+                        "not the total number of output items. "
+                        "Arguments must be strict JSON with no comments."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "required": ["itemName", "count"],
+                        "properties": {
+                            "itemName": {"type": "string"},
+                            "count": {"type": "integer", "minimum": 1},
                         },
                     },
                 },
@@ -455,8 +541,82 @@ class MinecraftController:
 
         return "tool completed successfully"
 
+    def removeArgumentComments(self, value):
+        if isinstance(value, dict):
+            return {
+                key: self.removeArgumentComments(item)
+                for key, item in value.items()
+            }
+
+        if isinstance(value, list):
+            return [
+                self.removeArgumentComments(item)
+                for item in value
+            ]
+
+        if isinstance(value, str):
+            return "\n".join(
+                line
+                for line in value.splitlines()
+                if not line.strip().startswith("/")
+            ).strip()
+
+        return value
+
     def callTool(self, name, arguments):
+        arguments = self.removeArgumentComments(arguments)
         logger.info(f"TOOL START name={name} arguments={arguments}")
+
+        if name == "placeBlocks":
+            results = [
+                self.callTool("place", block)
+                for block in arguments.get("blocks", [])
+            ]
+            return "done placing"
+
+        if name == "mineBlocks":
+            results = [
+                self.callTool("mine", coordinates)
+                for coordinates in arguments.get("coordinates", [])
+            ]
+            return "done breaking"
+
+        if name == "craftItems":
+            itemName = arguments["itemName"]
+            count = int(arguments["count"])
+
+            if count < 1:
+                return {
+                    "ok": False,
+                    "error": "count must be at least 1",
+                }
+
+            results = []
+            for _ in range(count):
+                results.append(
+                    self.callTool(
+                        "craft",
+                        {"itemName": itemName},
+                    )
+                )
+
+            try:
+                inventory = self.player.getInventory()
+                inventoryCount = sum(
+                    slot["count"]
+                    for slot in inventory.values()
+                    if itemName.lower()
+                    in str(slot["name"]).lower()
+                )
+            except Exception:
+                inventoryCount = None
+
+            return {
+                "ok": True,
+                "completed": len(results),
+                "lastResult": results[-1],
+                "inventoryCount": inventoryCount,
+            }
 
         if name == "simpleAction":
             name = arguments.pop("action")
