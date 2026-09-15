@@ -3,7 +3,7 @@
   "id": "craftcommand",
   "version": "${version}",
   "name": "Craft Command",
-  "description": "Adds a server-side /craft command that crafts an item from its first available recipe.",
+  "description": "Adds a server-side /craftItems command that crafts an item from its first available recipe.",
   "authors": ["Tzur Soffer"],
   "license": "MIT",
   "environment": "*",
