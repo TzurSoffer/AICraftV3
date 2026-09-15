@@ -9,7 +9,7 @@ import minescript as m
 
 
 logger = logging.getLogger(__name__)
-BARITONE_COMMAND_TIMEOUT = float(os.getenv("BARITONE_COMMAND_TIMEOUT", "60"))
+BARITONE_COMMAND_TIMEOUT = float(os.getenv("BARITONE_COMMAND_TIMEOUT", "120"))
 
 
 # class ChatListener:
@@ -367,10 +367,10 @@ class Player:
 
     def mine(self, x, y, z):
         m.chat("#allowBreak true")
+        m.chat("#sel clear")
         m.chat(f"#sel pos1 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel fill air")
-        m.chat("#sel clear")
         deadline = time.time() + BARITONE_COMMAND_TIMEOUT
         while time.time() < deadline:
             response = self._waitForBaritone()
@@ -651,11 +651,11 @@ class Player:
         blockType = self._normaliseBlockName(blockType)
 
         m.chat("#allowBreak false")
+        m.chat("#sel clear")
         m.chat(f"#sel pos1 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel fill {blockType}")
-        m.chat("#sel clear")
-        deadline = time.time() + BARITONE_COMMAND_TIMEOUT
+        deadline = time.time() + 10
         while time.time() < deadline:
             response = self._waitForBaritone()
             if response == None:
@@ -664,7 +664,7 @@ class Player:
                 return "Placed block successfully."
             if response.startswith("[Baritone] Unable to do it"):
                 return "Missing block in inventory. Could not place block."
-        return f"Placement timed out after {BARITONE_COMMAND_TIMEOUT:g} seconds."
+        return f"Placement timed out after {10:g} seconds."
 
     def sendMessage(self, message):
         if isinstance(message, (dict, list)):

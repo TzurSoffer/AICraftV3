@@ -4,3 +4,6 @@
 build
 gradle
 *.mp4
+*.mp3
+*.png
+*.mlt

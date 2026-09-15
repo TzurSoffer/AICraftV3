@@ -125,9 +125,9 @@ class OllamaAgent:
 
                     "If a building plan does not exist, create a "
                     "clear plan before building.\n"
-                    
-                    "If asking to build a 7x7 oak house, first mine 64 oak logs, then craft them into planks, then build the house, make sure to add a chest and door to the interior, nothing else should be inside the house. The house should be 3 blocks high from the inside and have a triangular roof\n"
-                    
+
+                    "If asking to build a 7x7 oak house, first mine 64 oak logs, then craft them into planks, then build the house, make sure to add a chest and door to the interior, nothing else should be inside the house. The house should be 3 blocks high from the inside and have a triangular roof made of planks. The corners should be made of oak logs. add trapdoor windows. Make sure to get 10 percent extra materials so you always have buffer space\n"
+
                     "After fully completing a step, update the building plan before proceeding to the next step.\n\n"
                 ),
             },
