@@ -31,7 +31,7 @@ aicraft.log
 ## Installation for multi-mc
 - Create a multi-mc instance on version 26.2
 - Install fabric into the instance
-- Install [baritone](https://github.com/cabaletta/baritone/releases/tag/v1.19.0), [minescript](https://modrinth.com/mod/minescript/version/5.0b11-fabric-26.2), and my /craft mod
+- Install [baritone](https://github.com/cabaletta/baritone/releases/tag/v1.19.0), [minescript](https://modrinth.com/mod/minescript/version/5.0b11-fabric-26.2), and my [/craft](https://github.com/TzurSoffer/AICraftV3/releases/tag/CRAFTMODV1.0.0) mod
 
 - Open your instance and start a new world (to create the minescript folder)
 - Close minecraft
