@@ -8,34 +8,27 @@ from ollama import Client
 logger = logging.getLogger(__name__)
 
 
-MODEL = "gpt-oss:120b"
+# OLLAMA_HOST = "http://192.168.0.122:11434"
+OLLAMA_HOST = "http://127.0.0.1:11434"
 
-OLLAMA_HOST = "http://192.168.0.122:11434"
-
-MAX_OUTPUT_TOKENS = int(
-    os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "4096")
-)
 
 EMPTY_RESPONSE_RETRIES = int(
     os.getenv("OLLAMA_EMPTY_RESPONSE_RETRIES", "2")
 )
-
-MAX_HISTORY_MESSAGES = int(
-    os.getenv("OLLAMA_MAX_HISTORY_MESSAGES", "80")
-)
-
 
 class OllamaAgent:
 
     def __init__(
         self,
         minecraft,
-        model=MODEL,
+        model="gpt-oss:120b",
+        reasoning=True,
     ):
         self.minecraft = minecraft
         self.currentGoal = None
         self.player = minecraft.player
         self.model = model
+        self.reasoning = reasoning
 
         self.ollama = Client(
             host=OLLAMA_HOST,
@@ -100,16 +93,13 @@ class OllamaAgent:
                     "eg. if you need to place multiple blocks, you can return multiple place calls in one response.\n"
 
                     "For repeated placements, mining, or crafting, prefer the batch tools placeBlocks, mineBlocks, and craftItems.\n"
-                    "Never put more than 16 blocks in one placeBlocks call or more than 16 coordinates in one mineBlocks call. For larger jobs, make multiple tool calls with complete JSON in each call. Never abbreviate JSON with ... .\n"
+                    "Never abbreviate JSON with ....\n"
                     "For craftItems, provide one itemName and a count. The count means how many times to run the craft operation, not the total number of output items.\n"
                     "Tool arguments must be strict JSON. Never include // comments, /* */ comments, markdown, labels, or trailing commas. Only provide the required arguments.\n"
                     
                     "Batch tool examples:\n"
-                    "Valid JSON examples: placeBlocks {\"blocks\":[{\"blockType\":\"minecraft:stone\",\"x\":10,\"y\":64,\"z\":10},{\"blockType\":\"minecraft:stone\",\"x\":11,\"y\":64,\"z\":10}]}\n"
+                    "Valid JSON examples: placeBlocks {\"blockType\": \"minecraft:stone\", \"coordinates\":[{\"x\":10,\"y\":64,\"z\":10},{\"x\":11,\"y\":64,\"z\":10}]}\n"
                     "mineBlocks {\"coordinates\":[{\"x\":10,\"y\":64,\"z\":10},{\"x\":11,\"y\":64,\"z\":10}]}\n"
-                    "craftItems {\"itemName\":\"minecraft:oak_planks\",\"count\":4} means invoke craft four times; it does not mean four output items.\n"
-
-                    "After craftItems, use its lastResult and inventoryCount to know the final craft result and how many matching items are currently in inventory.\n"
 
                     "Batch tool items are executed sequentially in the order provided.\n"
 
@@ -136,7 +126,7 @@ class OllamaAgent:
                     "If a building plan does not exist, create a "
                     "clear plan before building.\n"
                     
-                    "If asking to build a 5x5 oak house, first mine 25 oak logs, then craft them into planks, then build the house\n"
+                    "If asking to build a 7x7 oak house, first mine 64 oak logs, then craft them into planks, then build the house, make sure to add a chest and door to the interior, nothing else should be inside the house. The house should be 3 blocks high from the inside and have a triangular roof\n"
                     
                     "After fully completing a step, update the building plan before proceeding to the next step.\n\n"
                 ),
@@ -181,11 +171,7 @@ class OllamaAgent:
                     model=self.model,
                     messages=requestMessages,
                     tools=self.tools,
-                    think="medium",
-                    options={
-                        # Leave output length uncapped so large batch JSON
-                        # arguments are not truncated with an ellipsis.
-                    },
+                    think=self.reasoning,
                 )
 
                 message = response.message
@@ -363,7 +349,7 @@ class OllamaAgent:
 
             logger.info(
                 "MODEL END response=%s",
-                finalMessage,
+                response.message.content,
             )
 
             logger.info(

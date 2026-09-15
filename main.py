@@ -6,7 +6,8 @@ from minecraft import MinecraftController
 from ollamaAgent import OllamaAgent
 
 
-MODEL = "gpt-oss:120b"
+MODEL = "gemma4:31b-cloud"
+REASONING=True #< use "medium" for gpt-oss:120b, True for gemma4:31b-cloud
 
 LOG_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -36,6 +37,7 @@ def main():
     agent = OllamaAgent(
         minecraft=minecraft,
         model=MODEL,
+        reasoning=REASONING
     )
 
     minecraft.startChatListener(

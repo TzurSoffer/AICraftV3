@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
+import static com.mojang.brigadier.arguments.IntegerArgumentType.getInteger;
+import static com.mojang.brigadier.arguments.IntegerArgumentType.integer;
 
 public final class CraftCommandMod implements ModInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger("craftcommand");
@@ -23,17 +25,28 @@ public final class CraftCommandMod implements ModInitializer {
     }
 
     private static void register(CommandDispatcher<CommandSourceStack> dispatcher, net.minecraft.commands.CommandBuildContext registryAccess) {
-        dispatcher.register(literal("craft")
-                .then(argument("itemName", ItemArgument.item(registryAccess))
-                .executes(context -> craft(context.getSource(), ItemArgument.getItem(context, "itemName").item().value()))));
+        dispatcher.register(
+            literal("craftItems")
+                .then(
+                    argument("itemName", ItemArgument.item(registryAccess))
+                        .then(
+                            argument("amount", integer(1, 4096))
+                                .executes(context -> craft(
+                                    context.getSource(),
+                                    ItemArgument.getItem(context, "itemName").item().value(),
+                                    getInteger(context, "amount")
+                                ))
+                        )
+                )
+        );
     }
 
-    private static int craft(CommandSourceStack source, Item item) {
+    private static int craft(CommandSourceStack source, Item item, int count) {
         ServerPlayer player = source.getPlayer();
         if (player == null) {
             source.sendFailure(net.minecraft.network.chat.Component.literal("This command can only be used by a player."));
             return 0;
         }
-        return CraftingService.craft(player, item) ? 1 : 0;
+        return CraftingService.craft(player, item, count);
     }
 }

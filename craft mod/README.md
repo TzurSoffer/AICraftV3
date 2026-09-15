@@ -3,10 +3,10 @@
 Fabric 26.2 mod adding:
 
 ```text
-/craft <itemName>
+/craftItems <itemName> <amount>
 ```
 
-The command will craft the first available crafting-table recipe for the requested item, consume the required ingredients from the player's inventory, and place the result in the inventory.
+The command crafts the first available crafting-table recipe for the requested item until the requested output amount is reached or the required ingredients are unavailable. The amount is the number of output items, not the number of recipe executions.
 
 ## Build
 

@@ -2,7 +2,6 @@ import math
 import json
 import logging
 import os
-import shlex
 import time
 import threading
 
@@ -13,25 +12,97 @@ logger = logging.getLogger(__name__)
 BARITONE_COMMAND_TIMEOUT = float(os.getenv("BARITONE_COMMAND_TIMEOUT", "60"))
 
 
-"""
-player_inventory_select_slot
-player_press_jump
+# class ChatListener:
+#     def __init__(
+#         self,
+#         playerName,
+#         logFile: str = "../logs/latest.log",
+#         callback=None,
+#     ):
+#         self.run = False
+#         self.logFile = logFile
 
-player_inventory
-0-8     Hotbar
-9-5     Main inventory
-36-39   Armor slots
-40      Offhand
+#         self.fileSize = os.path.getsize(self.logFile)     #< quick comparison to avoid converting the file to list of lines if the file hasn't changed
+#         self.pendingLines = []
+#         self.pendingLinesLock = threading.Lock()
+#         self.sendMessagePrefix = f"[Render thread/INFO]: [CHAT] <{playerName}> "
+#         self.sendMessagePrefixLength = len(self.sendMessagePrefix)
+#         if callback is not None:
+#             self.callback = callback
+    
+#     def start(self):
+#         self.run = True
+#         threading.Thread(
+#             target=self.startListener,
+#             name="minecraft-chat-listener",
+#             daemon=False,
+#         ).start()
+    
+#     def stop(self):
+#         self.run = False
+    
+#     def callback(self, message):
+#         print(message)
+    
+#     def _getLatestChat(self):
+#         fileSize = os.path.getsize(self.logFile)
+#         if fileSize == self.fileSize:
+#             return None
+#         with open(self.logFile, 'r') as f:
+#             f.seek(self.fileSize)
+#             latest = f.readlines()
+#             self.fileSize = fileSize
+#             return latest
+  
+#     def startListener(self):
+#         logger.info("Chat listener reading %s", self.logFile)
+#         while self.run:
+#             try:
+#                 time.sleep(0.1) #< needs to be at start cause of "continue" statements below
+#                 latest = self._getLatestChat()
+#                 if latest:
+#                     self.latest = latest
+#                     callbacks = []
+#                     with self.pendingLinesLock:
+#                         for line in latest:
+#                             line = re.sub(
+#                                 r"^\[\d{2}:\d{2}:\d{2}\]\s*",
+#                                 "",
+#                                 line.rstrip("\r\n"),
+#                                 count=1,
+#                             )
+#                             if not line:
+#                                 continue
+#                             self.pendingLines.append(line)
+                            
+#                             ## Handle callback for chat messages that are sent by the player
+#                             if line[:self.sendMessagePrefixLength] != self.sendMessagePrefix:
+#                                 continue
+#                             line = line[self.sendMessagePrefixLength:]
+#                             callbacks.append(line)
 
-player_orientation
-player_set_orientation
-player_press_attack (t/f)
-player_press_use (t/f)
-player_press_drop (t/f)
+#                     for line in callbacks:
+#                         logger.info(f"Chat command received: {line}")
+#                         self.callback(line)
+#             except Exception:
+#                 logger.exception("Chat listener failed while reading Minecraft log")
 
-press_key_bind
-Valid values of key_mapping_name include: “key.advancements”, “key.attack”, “key.back”, “key.chat”, “key.command”, “key.drop”, “key.forward”, “key.fullscreen”, “key.hotbar.1”, “key.hotbar.2”, “key.hotbar.3”, “key.hotbar.4”, “key.hotbar.5”, “key.hotbar.6”, “key.hotbar.7”, “key.hotbar.8”, “key.hotbar.9”, “key.inventory”, “key.jump”, “key.left”, “key.loadToolbarActivator”, “key.pickItem”, “key.playerlist”, “key.right”, “key.saveToolbarActivator”, “key.screenshot”, “key.smoothCamera”, “key.sneak”, “key.socialInteractions”, “key.spectatorOutlines”, “key.sprint”, “key.swapOffhand”, “key.togglePerspective”, “key.use”
-"""
+    # def waitForChat(self, prefix, timeout=5, pollInterval=0.1):
+    #     beginTime = time.time()
+    #     while time.time() - beginTime < timeout:
+    #         with self.pendingLinesLock:
+    #             unmatched = []
+    #             while self.pendingLines:
+    #                 latest = self.pendingLines.pop(0)
+    #                 if latest[:len(prefix)] != prefix:
+    #                     unmatched.append(latest)
+    #                     continue
+    #                 self.pendingLines[0:0] = unmatched
+    #                 return latest[len(prefix) + 1:]
+    #             self.pendingLines[0:0] = unmatched
+
+    #         time.sleep(pollInterval)
+        # return None
 
 class ChatListener:
     def __init__(
@@ -99,6 +170,7 @@ class ChatListener:
                     self.latest = latest
             except Exception:
                 logger.exception("Chat listener failed while reading Minecraft log")
+
 
 class Player:
     def __init__(self):
@@ -294,11 +366,10 @@ class Player:
     #     return blocks[0]
 
     def mine(self, x, y, z):
-        blockType = self.getBlock(x, y, z)
-
+        m.chat("#allowBreak true")
         m.chat(f"#sel pos1 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
-        m.chat(f"#sel replace {blockType} air")
+        m.chat(f"#sel fill air")
         m.chat("#sel clear")
         deadline = time.time() + BARITONE_COMMAND_TIMEOUT
         while time.time() < deadline:
@@ -314,6 +385,7 @@ class Player:
         Example:
             mineBlock(5, "minecraft:diamond_ore")
         """
+        m.chat("#allowBreak true")
         m.chat(f"#mine {total} {blockName}")
         deadline = time.time() + BARITONE_COMMAND_TIMEOUT
         while time.time() < deadline:
@@ -568,28 +640,30 @@ class Player:
         time.sleep(0.1)
         m.player_press_drop(False)
     
-    def craft(self, itemName, waitForCompletion=True):
-        m.execute(f"/craft {itemName}")
-        if waitForCompletion:
-            return self._waitForCommand()
-        return "Craft command done."
+    def craftItems(self, itemName, amount):
+        m.execute(f"/craftItems {itemName} {int(amount)}")
+        return self._waitForCommand()
 
     def chooseSlot(self, slot):
         m.player_inventory_select_slot(int(slot))
 
     def place(self, blockType, x, y, z):
         blockType = self._normaliseBlockName(blockType)
-        currentBlock = self.getBlock(x, y, z)
 
+        m.chat("#allowBreak false")
         m.chat(f"#sel pos1 {int(x)} {int(y)} {int(z)}")
         m.chat(f"#sel pos2 {int(x)} {int(y)} {int(z)}")
-        m.chat(f"#sel replace {currentBlock} {blockType}")
+        m.chat(f"#sel fill {blockType}")
         m.chat("#sel clear")
         deadline = time.time() + BARITONE_COMMAND_TIMEOUT
         while time.time() < deadline:
             response = self._waitForBaritone()
+            if response == None:
+                continue
             if response == "[Baritone] Done building":
                 return "Placed block successfully."
+            if response.startswith("[Baritone] Unable to do it"):
+                return "Missing block in inventory. Could not place block."
         return f"Placement timed out after {BARITONE_COMMAND_TIMEOUT:g} seconds."
 
     def sendMessage(self, message):
@@ -701,8 +775,8 @@ class Player:
                 elif commandName == "mineBlock":
                     self.mineBlock(*args)
                 
-                elif commandName == "craft":
-                    self.craft(*args)
+                elif commandName == "craftItems":
+                    self.craftItems(*args)
 
                 elif commandName == "place":
                     self.place(*args)
@@ -818,16 +892,18 @@ class Player:
         self.handler([{"cmd": commandName, "args": args}])
 
 if __name__ == "__main__":
-    import os
-    player = Player()
+    cl = ChatListener(playerName="NotALinuxUser", logFile=os.path.abspath("./logs/latest.log"))
+    cl.waitForChat("NotALinuxUser", timeout=5, pollInterval=0.1)
+    # import os
+    # player = Player()
 
-    listener = ChatListener(
-        # playerName=player.name,
-        playerName="NotALinuxUser",
-        logFile=os.path.abspath("./logs/latest.log"),
-        callback=player.handleChat,
-    )
-    listener.start()
-    print("AI started")
-    while True:
-        time.sleep(1)
+    # listener = ChatListener(
+    #     # playerName=player.name,
+    #     playerName="NotALinuxUser",
+    #     logFile=os.path.abspath("./logs/latest.log"),
+    #     callback=player.handleChat,
+    # )
+    # listener.start()
+    # print("AI started")
+    # while True:
+    #     time.sleep(1)

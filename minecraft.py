@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 
 from MCBridge import ChatListener, Player
 
@@ -26,7 +27,7 @@ class MinecraftController:
             "goto": self.player.goto,
             "mine": self.player.mine,
             "mineBlock": self.player.mineBlock,
-            "craft": self.player.craft,
+            "craftItems": self.player.craftItems,
             "place": self.player.place,
             "attack": self.player.attack,
             "findEntities": self.player.findEntities,
@@ -127,26 +128,21 @@ class MinecraftController:
                     "name": "placeBlocks",
                     "description": (
                         "Place multiple blocks sequentially. Use this "
-                        "when two or more placements are needed. "
+                        "when two or more placements of the same block are needed. "
                         "Arguments must be strict JSON with no comments."
                     ),
                     "parameters": {
                         "type": "object",
-                        "required": ["blocks"],
+                        "required": ["blockType", "coordinates"],
                         "properties": {
-                            "blocks": {
+                            "blockType": {"type": "string"},
+                            "coordinates": {
                                 "type": "array",
-                                "maxItems": 16,
+                                "maxItems": 25,
                                 "items": {
                                     "type": "object",
-                                    "required": [
-                                        "blockType",
-                                        "x",
-                                        "y",
-                                        "z",
-                                    ],
+                                    "required": ["x", "y", "z"],
                                     "properties": {
-                                        "blockType": {"type": "string"},
                                         "x": {"type": "integer"},
                                         "y": {"type": "integer"},
                                         "z": {"type": "integer"},
@@ -172,7 +168,7 @@ class MinecraftController:
                         "properties": {
                             "coordinates": {
                                 "type": "array",
-                                "maxItems": 16,
+                                "maxItems": 25,
                                 "items": {
                                     "type": "object",
                                     "required": ["x", "y", "z"],
@@ -330,36 +326,19 @@ class MinecraftController:
             {
                 "type": "function",
                 "function": {
-                    "name": "craft",
-                    "description": (
-                        "Craft an item by name. Must have the "
-                        "required materials in inventory."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "required": ["itemName"],
-                        "properties": {
-                            "itemName": {"type": "string"},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "craftItems",
                     "description": (
-                        "Craft the same item repeatedly. The count is "
-                        "the number of times to run the craft operation, "
-                        "not the total number of output items. "
+                        "Craft an exact amount of output items. The "
+                        "amount is the desired number of items, not the "
+                        "number of recipe executions. "
                         "Arguments must be strict JSON with no comments."
                     ),
                     "parameters": {
                         "type": "object",
-                        "required": ["itemName", "count"],
+                        "required": ["itemName", "amount"],
                         "properties": {
                             "itemName": {"type": "string"},
-                            "count": {"type": "integer", "minimum": 1},
+                            "amount": {"type": "integer", "minimum": 1},
                         },
                     },
                 },
@@ -478,7 +457,7 @@ class MinecraftController:
 
             return f"mined {total} {blockName}"
 
-        if name == "craft":
+        if name == "craftItems":
             itemName = arguments.get("itemName", "")
 
             if str(result).lower().startswith(
@@ -567,13 +546,6 @@ class MinecraftController:
         arguments = self.removeArgumentComments(arguments)
         logger.info(f"TOOL START name={name} arguments={arguments}")
 
-        if name == "placeBlocks":
-            results = [
-                self.callTool("place", block)
-                for block in arguments.get("blocks", [])
-            ]
-            return "done placing"
-
         if name == "mineBlocks":
             results = [
                 self.callTool("mine", coordinates)
@@ -583,24 +555,18 @@ class MinecraftController:
 
         if name == "craftItems":
             itemName = arguments["itemName"]
-            count = int(arguments["count"])
+            amount = int(arguments["amount"])
 
-            if count < 1:
+            if amount < 1:
                 return {
                     "ok": False,
                     "error": "count must be at least 1",
                 }
 
-            results = []
-            for _ in range(count):
-                results.append(
-                    self.callTool(
-                        "craft",
-                        {"itemName": itemName},
-                    )
-                )
+            lastResult = self.player.craftItems(itemName, amount)
 
             try:
+                time.sleep(0.2)  # Allow time for inventory to update
                 inventory = self.player.getInventory()
                 inventoryCount = sum(
                     slot["count"]
@@ -613,8 +579,8 @@ class MinecraftController:
 
             return {
                 "ok": True,
-                "completed": len(results),
-                "lastResult": results[-1],
+                "requestedAmount": amount,
+                "lastResult": lastResult,
                 "inventoryCount": inventoryCount,
             }
 
@@ -649,6 +615,18 @@ class MinecraftController:
                     f"{x},{y},{z}; "
                     "choose another position"
                 )
+
+        if name == "placeBlocks":
+            blockType = arguments.get("blockType")
+            coordinates = arguments.get("coordinates", [])
+            failed = []
+            for coord in coordinates:
+                if self.callTool("place", {"blockType": blockType, **coord}) == "Missing block in inventory. Could not place block.":
+                    failed.append(f"({coord['x']}, {coord['y']}, {coord['z']})")
+            if failed:
+                return "Done placing, but failed to place blocks at the following coordinates due to missing blocks in inventory: " + ", ".join(failed)
+
+            return "done placing"
 
         if name not in self.toolMap:
             return {

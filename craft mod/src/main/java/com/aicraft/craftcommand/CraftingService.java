@@ -21,7 +21,25 @@ public final class CraftingService {
     private CraftingService() {
     }
 
-    public static boolean craft(ServerPlayer player, Item item) {
+    public static int craft(ServerPlayer player, Item item, int amount) {
+        int craftedAmount = 0;
+
+        while (craftedAmount < amount) {
+            int outputAmount = craftOnce(player, item);
+            if (outputAmount == 0) {
+                break;
+            }
+            craftedAmount += outputAmount;
+        }
+
+        player.sendSystemMessage(Component.literal(
+            "Crafted " + craftedAmount + " "
+                + Component.translatable(item.getDescriptionId()).getString()
+                + "."));
+        return craftedAmount;
+    }
+
+    private static int craftOnce(ServerPlayer player, Item item) {
         ServerLevel level = (ServerLevel) player.level();
         RecipeManager recipeManager = level.recipeAccess();
         Inventory inventory = player.getInventory();
@@ -76,12 +94,10 @@ public final class CraftingService {
                 removeOne(inventory, ingredientStack);
             }
             inventory.placeItemBackInInventory(result.copy());
-            player.sendSystemMessage(Component.literal("Crafted " + result.getHoverName().getString() + "."));
-            return true;
+                return result.getCount();
         }
 
-        player.sendSystemMessage(Component.literal("You do not have the ingredients for a recipe that makes that item."));
-        return false;
+        return 0;
     }
 
     private static ItemStack findMatchingStack(Inventory inventory, Ingredient ingredient, List<ItemStack> reserved) {
