@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "Craft Command",
   "description": "Adds a server-side /craft command that crafts an item from its first available recipe.",
-  "authors": ["AICraft2"],
+  "authors": ["Tzur Soffer"],
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
