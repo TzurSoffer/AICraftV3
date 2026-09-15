@@ -42,7 +42,7 @@ def main():
 
     minecraft.startChatListener(
         callback=agent.handleMessage,
-        controlledByPlayerName="NotALinuxUser"
+        controlledByPlayerName=os.getenv("MINECRAFT_PLAYER_NAME", None)
     )
 
     print(
