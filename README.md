@@ -2,6 +2,8 @@
 
 AICraftV3 is a Minecraft assistant that connects an Ollama model to Minecraft through MineScript and Baritone. The model receives world context, chooses tools, and executes actions such as movement, mining, placement, crafting, combat, and building-plan updates.
 
+[![AI plays Minecraft](https://img.youtube.com/vi/IdQpcH2k9_Y/0.jpg)](https://www.youtube.com/shorts/IdQpcH2k9_Y)
+
 ## Architecture
 
 ```text
